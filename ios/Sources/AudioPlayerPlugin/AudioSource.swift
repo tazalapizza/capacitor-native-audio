@@ -244,12 +244,36 @@ public class AudioSource: NSObject, AVAudioPlayerDelegate {
 
     func destroy() {
         audioMetadata.stopUpdater()
+ 
+        // MEMORY LEAK FIX: the original version of this method never
+        // invalidated audioReadyObservation. That observation's closure
+        // captures `self`, so skipping this created a permanent retain
+        // cycle - removing this AudioSource from the plugin's internal
+        // dictionary did NOT break the cycle, since the observation and
+        // this instance kept each other alive indefinitely regardless.
+        // Invalidated FIRST, before nil-ing the objects it observes,
+        // matching the same ordering changeAudioSource() already uses
+        // for its own observation teardown elsewhere in this file.
+        audioReadyObservation?.invalidate()
+        audioReadyObservation = nil
+ 
         removeOnEndObservation()
         isPaused = false
         removeRemoteTransportControls()
         removeNowPlaying()
         removeInterruptionNotifications()
+ 
+        // MEMORY LEAK FIX: none of these were ever released. Even without
+        // the observation leak above, the AVPlayer/AVPlayerItem instances
+        // themselves (which can hold real, non-trivial memory for
+        // buffered media data) would remain allocated for as long as
+        // anything, even transiently, still referenced this AudioSource.
+        player = nil
+        playerItem = nil
+        playerQueue = nil
+        playerLooper = nil
     }
+
 
     private func createPlayerItem() throws -> AVPlayerItem {
         let url = URL.init(string: source)
